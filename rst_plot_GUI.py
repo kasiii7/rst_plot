@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as colors
 import os
-from tkinter import *
-from tkinter import filedialog
+from tkinter import Tk, Label, Frame, Button, Text, StringVar, OptionMenu, Entry, LEFT, END, filedialog, messagebox 
+#KI -- imported messagebox to notify upon error
 
 # Script for plotting Shear Velocity Depth Profiles (SVDP) from output .rst files from Seis Imager
 # THIS CODE CAN TAKE EITHER OLD OR NEW RST FILES
@@ -14,6 +15,14 @@ from tkinter import filedialog
 # The beginning of this script opens a dialog window where you specify the input file, output filename, etc.
 # Then the script digests the RST file in an automated way that should accomodate .rst files of all shapes.
 # Below that is code that plots the SVDP. 
+#
+# Modified by Kirill Ivanov
+# April 2024
+
+# Added a possability to plot shear velocity depth profile for multiple sites. This will allow 
+# for site comparison and trend identification within districts. The dialog window has been updated with
+# a confirmation dropdown menu. If selected, the graph will only contain shear velocity depth profile 
+# for each selected file. Also, added pop-up error notification for better user response. 
 
 #################### Parameters you might wanna change #################################
 
@@ -25,6 +34,8 @@ plt.rcParams['font.size'] = 12
 point_alpha=1 # this is the transparency of the points on the SVDP (0=transparent, 1=opaque)
 figure_dim = [5,6] # ouput figure dimensions in inches [height, width] 
 
+colors_list = list(colors._colors_full_map.values())
+
 #########################################################################################
 
 
@@ -34,20 +45,22 @@ figure_dim = [5,6] # ouput figure dimensions in inches [height, width]
 
 # Create the main window
 root = Tk(screenName='RST to SVPD plotter 9000')
-root.geometry("1800x400")
+root.geometry('1000x500')
 
 # initialize variables with default values
 input_file = 'J:\division\school_seismic_safety'
 output_file_name = 'output'
 output_file_ext = '.pdf'
 old_new = 'Please choose...'
+multi_one = 'No'
 
 # Define the function to handle the submit button
 def submit():
-    global input_file, output_file_name, output_file_ext, old_new
+    global input_file, output_file_name, output_file_ext, old_new, multi_one
     output_file_name = output_file_name_entry.get()
     output_file_ext = output_file_ext_menu.get()
     old_new = old_new_menu.get()
+    multi_one = multi_one_menu.get()
     root.destroy()
 
 # Create the input file location browse button
@@ -60,12 +73,18 @@ input_frame.pack()
 input_file_button = Button(input_frame, text="Browse", command=lambda: update_input_file_textbox())
 input_file_button.pack(side=LEFT, padx=5)
 
-input_file_textbox = Text(input_frame, height=1, width=200)
+input_file_textbox = Text(input_frame, height=1, width=100)
 input_file_textbox.pack(side=LEFT)
+
+# def update_input_file_textbox():
+#     global input_file
+#     input_file = filedialog.askopenfilename(title="Select Input File")
+#     input_file_textbox.delete(1.0, END)
+#     input_file_textbox.insert(END, input_file)
 
 def update_input_file_textbox():
     global input_file
-    input_file = filedialog.askopenfilename(title="Select Input File")
+    input_file = filedialog.askopenfilenames(title="Select Input File", multiple=True) #KI -- can select multiple files
     input_file_textbox.delete(1.0, END)
     input_file_textbox.insert(END, input_file)
 
@@ -93,6 +112,15 @@ output_file_ext_menu.set(output_file_ext_options[0])
 output_file_ext_dropdown = OptionMenu(root, output_file_ext_menu, *output_file_ext_options)
 output_file_ext_dropdown.pack(pady=5)
 
+#KI -- Create multiple files dropdown menu
+multi_one_label = Label(root, text="Is this multiple files?")
+multi_one_label.pack(pady=2)
+multi_one_options = ['No', 'YES']
+multi_one_menu = StringVar()
+multi_one_menu.set(multi_one_options[0])
+multi_one_dropdown = OptionMenu(root, multi_one_menu, *multi_one_options)
+multi_one_dropdown.pack(pady=5)
+
 # Create the submit button
 submit_button = Button(root, text="Submit", command=submit)
 submit_button.pack(pady=30)
@@ -100,7 +128,17 @@ submit_button.pack(pady=30)
 # Start the main loop
 root.mainloop()
 
-directory, input_file = os.path.split(input_file)
+
+if (len(input_file) == 1)and(multi_one=='No'):   #KI -- writing split file names and checking multiple file option
+    directory, input_file = os.path.split(input_file[0])
+elif (len(input_file) != 1)and(multi_one=='YES'):
+    multiple_files_flag = 1
+    directory = os.path.split(input_file[0])[0]
+    input_file = list(input_file)
+    for i,line in enumerate(input_file):
+        input_file[i] = os.path.split(input_file[i])[1]
+else:
+    messagebox.showerror('ERROR', 'Error: Please make sure to select Multiple files option if you want to make SD-wide plot.')
 os.chdir(directory) # Directory where script will look for input_file file and save output plot
 output_file_name = output_file_name + output_file_ext # ouput file name with extension
 
@@ -111,75 +149,90 @@ output_file_name = output_file_name + output_file_ext # ouput file name with ext
 
 
 if old_new=='new': ###################################### CODE FOR NEW RST FILES #####################################################
-
-    temp_filename='temp_data_delete_me.txt' # name of temporary file that gets automatically deleted at the end of this script
-
-    ####### Import and sort out the .rst file #######
-
-    # Open the input_file file in UTF-16 LE encoding
-    with open(input_file, 'r', encoding='utf-16-le') as infile:
-        # Read the contents of the input_file file
-        contents = infile.read()
-
-    # Remove the BOM if it exists
-    if contents.startswith('\ufeff'):
-        contents = contents[1:]
-
-    # Open the output file in UTF-8 encoding
-    with open(temp_filename, 'w', encoding='utf-8') as outfile:
-        # Write the contents to the output file in UTF-8 encoding
-        outfile.write(contents)
-
-    # Each separate table in the .rst file begins with a single integer that tells you how tall that table (or block, as I'm calling them) will be.
-    # First we compile the integer row counts in the list rows_in_blocks.
-    rows_in_blocks = []
-    with open(temp_filename, "r") as f:
-        for line in f:
-            try:
-                num = int(line.lstrip().rstrip())  # This line tries to convert each row into a single integer, and only keeps the row if it succeeds
-                rows_in_blocks.append(num)
-            except ValueError:  # if the row isn't an integer, it passes the row
-                pass
-    del rows_in_blocks[-1]
-    rows_in_blocks[-1] = 2*rows_in_blocks[-1]-1 # Double the last element and subtract 1, since we need to apparently (it's just how the data are tabulated)
-
-
-    # By adding 1 to the row indices of the integers extracted above, we get the starting row of each block
-    row_idx = []
-    with open(temp_filename, "r") as f: # extracting the row index of each integer line in the .rst file
-        for i, line in enumerate(f):
-            line = line.strip()
-            if line.isdigit():
-                row_idx.append(i)
-    start_idx = [x + 1 for x in row_idx] # ading 1 to each element to get the 
-
-
-    # Remove troublesome index rows that had zero for the block length
-    no_zeros = [t for t in zip(start_idx, rows_in_blocks) if 0 not in t]
-    start_idx, rows_in_blocks = zip(*no_zeros)
-
-    # Now that we know the length of each block in the .rst file, and their starting rows, we can import the blocks and sort them into named variables
-    blocks = []
-    for i in range(len(start_idx)):
-        blocks.append(np.genfromtxt(temp_filename, delimiter=' ', dtype=None, encoding='utf-8', skip_header=start_idx[i], max_rows=rows_in_blocks[i]))
-    block1 = blocks[0] # 2D list with 6 columns: Vel_Meas Vel_Model Freq Coh unknown unknown
-    block4 = blocks[2] # 2D list with 2 columns: Depth Modeled_velocity
-
-    vel_meas = [row[0] for row in block1]
-    vel_model = [row[1] for row in block1]
-    freq = [row[2] for row in block1]
-
-    # to calculate the depth for the dispersion curve velocities, you divide the velocity (m/s) by the frequency (1/s) to get depth (m)
-    depth_meas = []
-    for i in range(len(vel_meas)):
-        depth_meas.append((vel_meas[i]/freq[i])/3)
-
-    depth_model = []
-    for i in range(len(vel_model)):
-        depth_model.append((vel_model[i]/freq[i])/3)
+    #KI -- allowing for multiple file readup
+    block4 = [None]*len(input_file)
+    SITE_ID = []
+    for j, file in enumerate(input_file):
+        if multi_one == 'No':
+            if j == 1:
+                break #KI - breaks the file loop is only 1 file selected
+            file = input_file
+            block4 = [None]
+        else:
+            SITE_ID.append(file.split('.')[0])
+            
+            
+        temp_filename='temp_data_delete_me.txt' # name of temporary file that gets automatically deleted at the end of this script
     
-    # Delete the temporary data file that we created at the beginning
-    os.remove(temp_filename)
+        ####### Import and sort out the .rst file #######
+    
+        # Open the input_file file in UTF-16 LE encoding
+        with open(file, 'r', encoding='utf-16-le') as infile:
+            # Read the contents of the input_file file
+            contents = infile.read()
+    
+        # Remove the BOM if it exists
+        if contents.startswith('\ufeff'):
+            contents = contents[1:]
+    
+        # Open the output file in UTF-8 encoding
+        with open(temp_filename, 'w', encoding='utf-8') as outfile:
+            # Write the contents to the output file in UTF-8 encoding
+            outfile.write(contents)
+    
+        # Each separate table in the .rst file begins with a single integer that tells you how tall that table (or block, as I'm calling them) will be.
+        # First we compile the integer row counts in the list rows_in_blocks.
+        rows_in_blocks = []
+        with open(temp_filename, "r") as f:
+            for line in f:
+                try:
+                    num = int(line.lstrip().rstrip())  # This line tries to convert each row into a single integer, and only keeps the row if it succeeds
+                    rows_in_blocks.append(num)
+                except ValueError:  # if the row isn't an integer, it passes the row
+                    pass
+        del rows_in_blocks[-1]
+        rows_in_blocks[-1] = 2*rows_in_blocks[-1]-1 # Double the last element and subtract 1, since we need to apparently (it's just how the data are tabulated)
+    
+    
+        # By adding 1 to the row indices of the integers extracted above, we get the starting row of each block
+        row_idx = []
+        with open(temp_filename, "r") as f: # extracting the row index of each integer line in the .rst file
+            for i, line in enumerate(f):
+                line = line.strip()
+                if line.isdigit():
+                    row_idx.append(i)
+        start_idx = [x + 1 for x in row_idx] # ading 1 to each element to get the 
+    
+    
+        # Remove troublesome index rows that had zero for the block length
+        no_zeros = [t for t in zip(start_idx, rows_in_blocks) if 0 not in t]
+        start_idx, rows_in_blocks = zip(*no_zeros)
+    
+        # Now that we know the length of each block in the .rst file, and their starting rows, we can import the blocks and sort them into named variables
+        blocks = []
+        
+        for i in range(len(start_idx)):
+            blocks.append(np.genfromtxt(temp_filename, delimiter=' ', dtype=None, encoding='utf-8', skip_header=start_idx[i], max_rows=rows_in_blocks[i]))
+        block1 = blocks[0] # 2D list with 6 columns: Vel_Meas Vel_Model Freq Coh unknown unknown
+        # if j == 0:
+        #     block4 = np.zeros((len(input_file),blocks[2].shape[0], blocks[2].shape[1]))
+        block4[j] = blocks[2] # 2D list with 2 columns: Depth Modeled_velocity
+    
+        vel_meas = [row[0] for row in block1]
+        vel_model = [row[1] for row in block1]
+        freq = [row[2] for row in block1]
+    
+        # to calculate the depth for the dispersion curve velocities, you divide the velocity (m/s) by the frequency (1/s) to get depth (m)
+        depth_meas = []
+        for i in range(len(vel_meas)):
+            depth_meas.append((vel_meas[i]/freq[i])/3)
+    
+        depth_model = []
+        for i in range(len(vel_model)):
+            depth_model.append((vel_model[i]/freq[i])/3)
+        
+        # Delete the temporary data file that we created at the beginning
+        os.remove(temp_filename)
 
 elif old_new=='old': ####################################### CODE FOR OLD RST FILES #######################################
 
@@ -235,7 +288,8 @@ elif old_new=='old': ####################################### CODE FOR OLD RST FI
         depth_model.append((row[0]/row[2])/3)
 
 else:  # Outputs an error in case the user forgets to enter whether the RST is old or new. 
-    print('Error: You must select whether the input file is an old or new RST file!!!! Try again.')
+    messagebox.showerror('ERROR', 'Error: You must select whether the input file is an old or new RST file!!!! Try again.')
+    #KI -- better error message
 
 ############# Plotting the SVDP ##############
 
@@ -244,17 +298,29 @@ fig1, svdp = plt.subplots(1,1,figsize=figure_dim)
 # add a background grid
 svdp.grid(color='gainsboro', linestyle='-', linewidth=0.5)
 
-# plot the Vs data ###### THIS IS WHERE YOU CAN CHANGE THE SYMBOLOGY OF THE PLOT ############
-plt.plot(vel_meas,depth_meas, color='cornflowerblue', marker='o', ms=4, alpha=point_alpha, label='Measured dispersion \ncurve picks', linestyle='none') # Measured velocity picks
-
-if not vel_model[0]==0: # only plots the modeled picks if there are any (if the SVDP is based off the initial model, then no modeled picks are made)
-    plt.plot(vel_model,depth_model, color='black', marker='o', ms=4, alpha=point_alpha, label='Modeled dispersion \ncurve picks', linestyle='none') # Modeled velocity picks
-
-plt.plot(block4[:,1],block4[:,0], color='red', linewidth=1.5, label='Shear velocity \ndepth profile') # The stairstepped velocity model
+#KI -- if multiple files are selected only plot depth profiles
+if multi_one == 'YES':
+    for i, data in enumerate(block4):    
+        plt.plot(data[:,1],data[:,0], color=colors_list[i*5], linewidth=1.5, label=SITE_ID[i])
+else:
+    # plot the Vs data ###### THIS IS WHERE YOU CAN CHANGE THE SYMBOLOGY OF THE PLOT ############
+    plt.plot(vel_meas,depth_meas, color='cornflowerblue', marker='o', ms=4, alpha=point_alpha, label='Measured dispersion \ncurve picks', linestyle='none') # Measured velocity picks
+    
+    if not vel_model[0]==0: # only plots the modeled picks if there are any (if the SVDP is based off the initial model, then no modeled picks are made)
+        plt.plot(vel_model,depth_model, color='black', marker='o', ms=4, alpha=point_alpha, label='Modeled dispersion \ncurve picks', linestyle='none') # Modeled velocity picks
+    
+    plt.plot(block4[0][:,1],block4[0][:,0], color='red', linewidth=1.5, label='Shear velocity \ndepth profile') # The stairstepped velocity model
 
 svdp.invert_yaxis() # reverse the depth axis (down should be deeper)
 
-svdp.set_xlim(left=0, right=max([vs[1] for vs in block4 if vs[0] < 35])+50) # make sure the x axis begins at zero
+# KI -- checking for max x axis in all depth models
+max_vs = 0      
+for i in block4:
+    max_i = max([vs[1] for vs in i if vs[0] < 35])
+    if max_i > max_vs:
+        max_vs = max_i
+
+svdp.set_xlim(left=0, right=max_vs+50) # make sure the x axis begins at zero
 svdp.set_ylim(top=0, bottom=35) # make sure the y axis begins at  zero and cuts off at 35 m
 
 svdp.xaxis.tick_top() # move the x-axis to the top of the plot
