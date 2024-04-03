@@ -314,14 +314,19 @@ else:
 svdp.invert_yaxis() # reverse the depth axis (down should be deeper)
 
 # KI -- checking for max x axis in all depth models
-max_vs = 0      
+max_vs = 0 
+max_d = 0     
 for i in block4:
-    max_i = max([vs[1] for vs in i if vs[0] < 35])
-    if max_i > max_vs:
-        max_vs = max_i
-
+    if multi_one == "No":
+        max_id, max_ivs = [35, max([vs[1] for vs in i if vs[0] < 35])]
+    else:
+        max_id, max_ivs = np.max(i, axis=0)
+    if max_ivs> max_vs:
+        max_vs = max_ivs
+    if max_id > max_d:
+        max_d = max_id
 svdp.set_xlim(left=0, right=max_vs+50) # make sure the x axis begins at zero
-svdp.set_ylim(top=0, bottom=35) # make sure the y axis begins at  zero and cuts off at 35 m
+svdp.set_ylim(top=0, bottom=max_d) # make sure the y axis begins at  zero and cuts off at 35 m
 
 svdp.xaxis.tick_top() # move the x-axis to the top of the plot
 svdp.xaxis.set_label_position('top') # move the x-axis label to the top of the plot
