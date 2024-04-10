@@ -76,12 +76,6 @@ input_file_button.pack(side=LEFT, padx=5)
 input_file_textbox = Text(input_frame, height=1, width=100)
 input_file_textbox.pack(side=LEFT)
 
-# def update_input_file_textbox():
-#     global input_file
-#     input_file = filedialog.askopenfilename(title="Select Input File")
-#     input_file_textbox.delete(1.0, END)
-#     input_file_textbox.insert(END, input_file)
-
 def update_input_file_textbox():
     global input_file
     input_file = filedialog.askopenfilenames(title="Select Input File", multiple=True) #KI -- can select multiple files
@@ -137,6 +131,8 @@ elif (len(input_file) != 1)and(multi_one=='YES'):
     input_file = list(input_file)
     for i,line in enumerate(input_file):
         input_file[i] = os.path.split(input_file[i])[1]
+elif (old_new== 'old')and(multi_one=='YES'):
+    messagebox.showerror('ERROR','This script cannot make multiple file profile with OLD .rst data format. Please open .rst file in WaveEq and save in NEW format.')
 else:
     messagebox.showerror('ERROR', 'Error: Please make sure to select Multiple files option if you want to make SD-wide plot.')
 os.chdir(directory) # Directory where script will look for input_file file and save output plot
@@ -147,6 +143,25 @@ output_file_name = output_file_name + output_file_ext # ouput file name with ext
 
 # Depending on whether the user says the input file is Old or New (in the old_new variable) one of the two alternative scripts are run below:
 
+def terminate_half_space(data):
+    #KI -- function to cut off the 1/2 space in Vs/depth profiles
+    count = 0
+    data_end = data[-7:][:][:,0]
+    data_diff = np.empty(6)
+    for i in range(6):
+        data_diff[i] = data_end[i+1] - data_end[i] 
+        if data_diff[i] == 0:
+            data_diff[i] = data_diff[i-1]
+    ave_end = np.average(data_diff)
+    mask = data_diff < ave_end
+    sampled_thickness = np.average(data_diff[mask])
+    for i in range(len(data_diff[~mask])):
+        if data_diff[-(i+1)] > 3*sampled_thickness:
+            count += 1
+    if count != 0:
+        return data[:-count]
+    else:
+        return data
 
 if old_new=='new': ###################################### CODE FOR NEW RST FILES #####################################################
     #KI -- allowing for multiple file readup
@@ -184,12 +199,15 @@ if old_new=='new': ###################################### CODE FOR NEW RST FILES
         # First we compile the integer row counts in the list rows_in_blocks.
         rows_in_blocks = []
         with open(temp_filename, "r") as f:
-            for line in f:
-                try:
-                    num = int(line.lstrip().rstrip())  # This line tries to convert each row into a single integer, and only keeps the row if it succeeds
-                    rows_in_blocks.append(num)
-                except ValueError:  # if the row isn't an integer, it passes the row
-                    pass
+            try:
+                for line in f:
+                    try:
+                        num = int(line.lstrip().rstrip())  # This line tries to convert each row into a single integer, and only keeps the row if it succeeds
+                        rows_in_blocks.append(num)
+                    except ValueError:  # if the row isn't an integer, it passes the row
+                        pass
+            except UnicodeDecodeError: #KI - catch if using OLD data type but selected NEW
+                messagebox.showerror('ERROR','Error: Selected .rst file is in OLD format but you selected NEW. Please select correct data format for the file.')
         del rows_in_blocks[-1]
         rows_in_blocks[-1] = 2*rows_in_blocks[-1]-1 # Double the last element and subtract 1, since we need to apparently (it's just how the data are tabulated)
     
@@ -214,9 +232,7 @@ if old_new=='new': ###################################### CODE FOR NEW RST FILES
         for i in range(len(start_idx)):
             blocks.append(np.genfromtxt(temp_filename, delimiter=' ', dtype=None, encoding='utf-8', skip_header=start_idx[i], max_rows=rows_in_blocks[i]))
         block1 = blocks[0] # 2D list with 6 columns: Vel_Meas Vel_Model Freq Coh unknown unknown
-        # if j == 0:
-        #     block4 = np.zeros((len(input_file),blocks[2].shape[0], blocks[2].shape[1]))
-        block4[j] = blocks[2] # 2D list with 2 columns: Depth Modeled_velocity
+        block4[j] = terminate_half_space(blocks[2]) # 2D list with 2 columns: Depth Modeled_velocity
     
         vel_meas = [row[0] for row in block1]
         vel_model = [row[1] for row in block1]
@@ -313,7 +329,7 @@ else:
 
 svdp.invert_yaxis() # reverse the depth axis (down should be deeper)
 
-# KI -- checking for max x axis in all depth models
+# KI -- checking for max depth and VS in all depth models
 max_vs = 0 
 max_d = 0     
 for i in block4:
@@ -325,22 +341,32 @@ for i in block4:
         max_vs = max_ivs
     if max_id > max_d:
         max_d = max_id
+# KI -- updated axis limits
 svdp.set_xlim(left=0, right=max_vs+50) # make sure the x axis begins at zero
 svdp.set_ylim(top=0, bottom=max_d) # make sure the y axis begins at  zero and cuts off at 35 m
 
 svdp.xaxis.tick_top() # move the x-axis to the top of the plot
 svdp.xaxis.set_label_position('top') # move the x-axis label to the top of the plot
 
-# Add the legend
-plt.legend()
-
 # Titles and stuff
 plt.title('Shear velocity depth profile')
 plt.xlabel('Shear wave velocity (m/s)')
 plt.ylabel('Depth (m)')
 
-# Save the plot as a file
-plt.savefig(output_file_name)
-
-# Display the plot
-plt.show()
+if multi_one == "YES": #KI -- if multi file selected, plot legend separatly
+    plt.savefig(output_file_name)
+    plt.show()
+    fig1.canvas.draw()
+    legend = fig1.legend()
+    legend_bbox = legend.get_tightbbox(fig1.canvas.get_renderer())
+    legend_bbox = legend_bbox.transformed(fig1.dpi_scale_trans.inverted())
+    legend_fig, legend_ax = plt.subplots(figsize=(legend_bbox.width, legend_bbox.height))
+    legend_ax.legend(*svdp.get_legend_handles_labels(), loc ='center',
+                     fancybox=None, frameon=False)
+    legend_ax.axis('off')
+    output_file_name = 'Legend_' + output_file_name
+    legend_fig.savefig(output_file_name)
+else:
+    plt.legend()
+    plt.savefig(output_file_name)
+    plt.show()
